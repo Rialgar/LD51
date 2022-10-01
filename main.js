@@ -29,7 +29,6 @@ function main(){
         ctx.fillStyle = 'gold';
         ctx.beginPath();
         const scale = Math.max(1, (100-projectile.age)/25);
-        console.log(scale);
         ctx.ellipse(projectile.x, projectile.y, projectile.collisionRadius*scale, projectile.collisionRadius, projectile.dir, 0, 2*Math.PI);
         ctx.closePath();
         ctx.fill();
@@ -50,7 +49,7 @@ function main(){
         {
             id: "pea-shooter",
             delayMillis: 300,
-            recoil: 1,
+            recoil: 2,
             heat: 1,
             distance: 5,
             depth: 5,
@@ -115,12 +114,16 @@ function main(){
             projectile.y += Math.sin(projectile.dir) * movement;
             projectile.age += deltaMillis;
         });
+        gameState.projectiles = gameState.projectiles.filter(projectile => projectile.age < TEN_SECONDS);
+        
+        gameState.player.recoil = Math.max(0, Math.min(gameState.player.recoil - 0.1, gameState.player.recoil/1.2));
 
         gameState.weaponDelayMillis = Math.max(0, gameState.weaponDelayMillis - deltaMillis);
-        if(gameState.buttonsDown.left && gameState.weaponDelayMillis === 0){
-            //TODO respect recoil
-            const tipX = Math.cos(gameState.mousePos.dir) * gameState.currentWeapon.shape.tip;
-            const tipY = Math.sin(gameState.mousePos.dir) * gameState.currentWeapon.shape.tip;
+        if(gameState.buttonsDown.left && gameState.weaponDelayMillis === 0){            
+            const tipX = Math.cos(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
+            const tipY = Math.sin(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
+
+            gameState.player.recoil += gameState.currentWeapon.recoil;
 
             gameState.projectiles.push(...gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir));
             gameState.weaponDelayMillis = gameState.currentWeapon.delayMillis;
@@ -191,7 +194,7 @@ function main(){
         ctx.closePath();
         ctx.stroke();
 
-        //TODO respect recoil
+        ctx.translate(-gameState.player.recoil, 0);
         const weaponShape = gameState.currentWeapon.shape;
 
         ctx.beginPath();
