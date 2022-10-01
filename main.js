@@ -14,7 +14,7 @@ function main(){
         currentWeapon: null,
         weaponTimerMillis: TEN_SECONDS,
         weaponDelayMillis: 0,
-        player: {recoil: 0, heat: 0, health: 100},
+        player: {recoil: 0, heat: 0, health: 10},
         projectiles: [],
         enemies: [],
         time: 0,
@@ -36,8 +36,7 @@ function main(){
 
     function createBullet(x, y, dir, unitsPerSec, radius, damage){
         return {
-            x, y, dir, unitsPerSec,
-            impactDamage: damage,
+            x, y, dir, unitsPerSec, damage,
             collides: true,
             collisionRadius: radius,
             draw: drawBullet,
@@ -95,17 +94,49 @@ function main(){
         }
     });
 
+    function addEnemy(enemy){
+        enemy.dir = Math.random() * 2 * Math.PI;
+        delete enemy.x;
+        delete enemy.y;
+
+        if(!enemy.timeMillis){
+            enemy.timeMillis = TEN_SECONDS;
+        }
+        const index = gameState.enemyQueue.findIndex(existing => existing.timeMillis > enemy.timeMillis);
+        if(index >= 0){
+            gameState.enemyQueue.splice(index, 0, enemy);
+        } else {
+            gameState.enemyQueue.push(enemy);
+        }
+    }
+
     function init(){
         gameState.time = 0;
         gameState.enemies = [];
         gameState.enemyQueue = [];
         gameState.projectiles = [];
-        gameState.player = {recoil: 0, heat: 0, health: 100};
+        gameState.player = {recoil: 0, heat: 0, health: 10};
         gameState.weaponTimerMillis = TEN_SECONDS;
 
         gameState.currentWeapon = weapons[0];
+        addEnemy({unitsPerSec: 20, size: 5, timeMillis: 5000});
+        addEnemy({unitsPerSec: 20, size: 5, timeMillis: TEN_SECONDS});
     }
     init();
+
+    function spawnEnemy(newEnemy){
+        delete newEnemy.timeMillis;
+        newEnemy.age = 0;
+        newEnemy.health = 2*newEnemy.size;
+        if(!newEnemy.x){
+            newEnemy.x = Math.cos(newEnemy.dir) * 110;
+            newEnemy.y = Math.sin(newEnemy.dir) * 110;
+            newEnemy.dir += Math.PI; //was spawndir, now movedir
+        }
+        newEnemy.dir += (Math.random() * 2 * Math.PI/3) - Math.PI/3;
+
+        gameState.enemies.push(newEnemy);
+    }
 
     function update(deltaMillis){
         gameState.projectiles.forEach( projectile => {
@@ -136,6 +167,83 @@ function main(){
             gameState.currentWeapon = candidates[Math.floor(Math.random() * candidates.length)];
             gameState.weaponDelayMillis = 0;
         }
+
+        gameState.enemies.forEach(enemy => {
+            const movement = enemy.unitsPerSec / 1000 * deltaMillis;
+            enemy.x += Math.cos(enemy.dir) * movement;
+            enemy.y += Math.sin(enemy.dir) * movement;
+            enemy.age += deltaMillis;
+
+            const distSq = enemy.x*enemy.x + enemy.y*enemy.y;
+            if(distSq < CENTER_SIZE*CENTER_SIZE){
+                if(gameState.player.health > 0){
+                    enemy.health = 0;
+                    gameState.player.health -= 1;
+                    addEnemy({...enemy, size: enemy.size});
+                } else {
+                    alert('You lost. Game will reset.');
+                    init();
+                }
+            } else {
+                const weight = Math.round(1e7/deltaMillis/enemy.age);
+                let dirToTarget = Math.atan2(-enemy.y, -enemy.x);
+                while(dirToTarget - enemy.dir > Math.PI){
+                    dirToTarget -= 2*Math.PI;
+                }
+                while(dirToTarget - enemy.dir < -Math.PI){
+                    dirToTarget += 2*Math.PI;
+                }
+                enemy.dir = (enemy.dir * weight + dirToTarget) / (weight + 1);
+
+                gameState.projectiles.forEach(projectile => {
+                    if(projectile.collides){
+                        const deltaX = enemy.x - projectile.x;
+                        const deltaY = enemy.y - projectile.y;
+                        const distSq = deltaX*deltaX + deltaY*deltaY;
+                        const colDist = enemy.size + projectile.collisionRadius;
+                        if(distSq < colDist*colDist){
+                            enemy.health -= projectile.damage;
+                            projectile.age += TEN_SECONDS;
+                        }
+                    }
+                });
+
+                if(enemy.health <= 0){
+                    if(enemy.size >= 8){
+                        spawnEnemy({...enemy, size: 2});
+                        spawnEnemy({...enemy, size: 2});
+                    } else {
+                        addEnemy({...enemy, size: enemy.size + Math.random()*2});
+                    }
+                }
+            }
+        });
+
+        gameState.enemies = gameState.enemies.filter(enemy => enemy.health > 0);
+
+        gameState.enemyQueue.forEach(queued => queued.timeMillis -= deltaMillis);
+        while(gameState.enemyQueue.length > 0 && gameState.enemyQueue[0].timeMillis <= 0){
+            spawnEnemy(gameState.enemyQueue.shift());
+        }
+    }
+
+    const cracks = [];
+    for(let i = 0; i < 10; i++){
+        const points = [
+            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 1*CENTER_SIZE/4],
+            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 2*CENTER_SIZE/4],
+            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 3*CENTER_SIZE/4],
+            [0, CENTER_SIZE]
+        ]
+        const sin = Math.sin(2 * Math.PI * i/10);
+        const cos = Math.cos(2 * Math.PI * i/10);
+        let path = 'M 0 0';
+        points.forEach(p => {
+            const x = cos * p[0] - sin * p[1];
+            const y = sin * p[0] + cos * p[1];
+            path += ` L ${x} ${y}`;
+        })
+        cracks.push(new Path2D(path));
     }
 
     function drawCenter(ctx){
@@ -182,6 +290,12 @@ function main(){
             ctx.lineTo(cos*INNER_CENTER_SIZE, sin*INNER_CENTER_SIZE);
             ctx.stroke();
         }
+
+        for(let i = 0; i < 10 && i < 10-gameState.player.health; i++){
+            ctx.lineWidth = 0.2;
+            ctx.fillStyle = 'white';
+            ctx.stroke(cracks[i]);
+        }
     }
 
     function drawGunner(ctx){
@@ -206,6 +320,17 @@ function main(){
         ctx.stroke();
 
         ctx.restore();
+    }
+
+    function drawEnemy(enemy, ctx){
+        ctx.strokeStyle = "white";
+        ctx.fillStyle = "red";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(enemy.x, enemy.y, enemy.size, enemy.size, 0, 0, 2*Math.PI);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fill();
     }
 
     function drawFrame(ctx){
@@ -234,8 +359,11 @@ function main(){
         ctx.beginPath();
         ctx.ellipse(0, 0, 99, 99, 0, 0, 2*Math.PI);
         ctx.closePath();
-        ctx.clip();
+        //ctx.clip();
 
+        gameState.enemies.forEach(
+            enemy => drawEnemy(enemy, ctx)
+        );
         gameState.projectiles.forEach(
             projectile => projectile.draw(projectile, ctx)
         );
