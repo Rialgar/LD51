@@ -1,6 +1,8 @@
 function main(){
     const TEN_SECONDS = 10000;
     const CENTER_SIZE = 15;
+    const TIMER_SIZE = 3;
+    const INNER_CENTER_SIZE = CENTER_SIZE - TIMER_SIZE;
     const GUNNER_SIZE = 5;
 
     const canvas = document.getElementById('canvas');
@@ -10,7 +12,7 @@ function main(){
     const gameState = {
         mousePos: {x: 50, y: 0, dir: 0},
         currentWeapon: null,
-        weaponTimer: TEN_SECONDS,
+        weaponTimerMillis: TEN_SECONDS,
         weaponDelayMillis: 0,
         player: {recoil: 0, heat: 0, health: 100},
         projectiles: [],
@@ -26,7 +28,9 @@ function main(){
     function drawBullet(projectile, ctx){
         ctx.fillStyle = 'gold';
         ctx.beginPath();
-        ctx.ellipse(projectile.x, projectile.y, projectile.collisionRadius, projectile.collisionRadius, 0, 0, 2*Math.PI);
+        const scale = Math.max(1, (100-projectile.age)/25);
+        console.log(scale);
+        ctx.ellipse(projectile.x, projectile.y, projectile.collisionRadius*scale, projectile.collisionRadius, projectile.dir, 0, 2*Math.PI);
         ctx.closePath();
         ctx.fill();
     }
@@ -38,6 +42,7 @@ function main(){
             collides: true,
             collisionRadius: radius,
             draw: drawBullet,
+            age: 0,
         }
     }
 
@@ -52,6 +57,21 @@ function main(){
             grip: 2,
             width: Math.PI/6,
             projectiles: (x, y, dir) => [createBullet(x, y, dir, 100, 2, 5)]
+        },
+        {
+            id: "spread",
+            delayMillis: 200,
+            recoil: 1,
+            heat: 1,
+            distance: 4,
+            depth: 3,
+            grip: 1,
+            width: Math.PI/5,
+            projectiles: (x, y, dir) => [
+                createBullet(x, y, dir, 100, 1, 2),
+                createBullet(x, y, dir + Math.PI/6, 100, 1, 2),
+                createBullet(x, y, dir - Math.PI/6, 100, 1, 2)
+            ]
         }
     ];
 
@@ -82,7 +102,7 @@ function main(){
         gameState.enemyQueue = [];
         gameState.projectiles = [];
         gameState.player = {recoil: 0, heat: 0, health: 100};
-        gameState.weaponTimer = TEN_SECONDS;
+        gameState.weaponTimerMillis = TEN_SECONDS;
 
         gameState.currentWeapon = weapons[0];
     }
@@ -93,10 +113,10 @@ function main(){
             const movement = projectile.unitsPerSec / 1000 * deltaMillis;
             projectile.x += Math.cos(projectile.dir) * movement;
             projectile.y += Math.sin(projectile.dir) * movement;
+            projectile.age += deltaMillis;
         });
 
         gameState.weaponDelayMillis = Math.max(0, gameState.weaponDelayMillis - deltaMillis);
-
         if(gameState.buttonsDown.left && gameState.weaponDelayMillis === 0){
             //TODO respect recoil
             const tipX = Math.cos(gameState.mousePos.dir) * gameState.currentWeapon.shape.tip;
@@ -105,23 +125,67 @@ function main(){
             gameState.projectiles.push(...gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir));
             gameState.weaponDelayMillis = gameState.currentWeapon.delayMillis;
         }
+
+        gameState.weaponTimerMillis = Math.max(0, gameState.weaponTimerMillis - deltaMillis);
+        if(gameState.weaponTimerMillis === 0){
+            gameState.weaponTimerMillis = TEN_SECONDS;
+            const candidates = weapons.filter(weapon => weapon !== gameState.currentWeapon);
+            gameState.currentWeapon = candidates[Math.floor(Math.random() * candidates.length)];
+            gameState.weaponDelayMillis = 0;
+        }
     }
 
     function drawCenter(ctx){
+        for(let i = 0; i < 10; i++){
+            const angle0 = (i-3) / 10 * 2 * Math.PI;
+            const sin0 = Math.sin(angle0);
+            const cos0 = Math.cos(angle0);
+            const angle1 = (i-2) / 10 * 2 * Math.PI;
+            const sin1 = Math.sin(angle1);
+            const cos1 = Math.cos(angle1);
+
+            const level = Math.min(1, Math.max(0, i + 1 - gameState.weaponTimerMillis/1000));
+            ctx.fillStyle = `hsl(280, 100%, ${level*50}%)`;
+            ctx.beginPath();
+            ctx.moveTo(cos0*CENTER_SIZE, sin0*CENTER_SIZE);
+            ctx.arc(0, 0, CENTER_SIZE, angle0, angle1);
+            ctx.lineTo(cos1*INNER_CENTER_SIZE, sin1*INNER_CENTER_SIZE);
+            ctx.arc(0, 0, INNER_CENTER_SIZE, angle1, angle0, true);
+            ctx.closePath();
+            ctx.fill();
+        }
+
         ctx.strokeStyle = "white";
-        ctx.fillStyle= "black";
         ctx.beginPath();
         ctx.ellipse(0, 0, CENTER_SIZE, CENTER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
+        ctx.stroke();
+
+        ctx.fillStyle = 'black';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, INNER_CENTER_SIZE, INNER_CENTER_SIZE, 0, 0, 2*Math.PI);
+        ctx.closePath();
         ctx.fill();
         ctx.stroke();
+
+        for(let i = 0; i < 10; i++){
+            const angle = i / 10 * 2 * Math.PI;
+            const sin = Math.sin(angle);
+            const cos = Math.cos(angle);
+            
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(cos*CENTER_SIZE, sin*CENTER_SIZE);
+            ctx.lineTo(cos*INNER_CENTER_SIZE, sin*INNER_CENTER_SIZE);
+            ctx.stroke();
+        }
     }
 
     function drawGunner(ctx){
         ctx.save()
         ctx.rotate(gameState.mousePos.dir);
 
-        ctx.strokeStyle = "yellow";
+        ctx.strokeStyle = 'hsl(280, 100%, 75%)';
         ctx.beginPath();
         ctx.ellipse(CENTER_SIZE, 0, GUNNER_SIZE, GUNNER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
