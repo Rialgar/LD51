@@ -14,7 +14,7 @@ function main(){
         currentWeapon: null,
         weaponTimerMillis: TEN_SECONDS,
         weaponDelayMillis: 0,
-        player: {recoil: 0, heat: 0, health: 10},
+        player: {recoil: 0, heat: 0, cooling: false, health: 10},
         projectiles: [],
         enemies: [],
         time: 0,
@@ -49,7 +49,7 @@ function main(){
             id: "pea-shooter",
             delayMillis: 300,
             recoil: 2,
-            heat: 1,
+            heat: 900,
             distance: 5,
             depth: 5,
             grip: 2,
@@ -60,7 +60,7 @@ function main(){
             id: "spread",
             delayMillis: 200,
             recoil: 1,
-            heat: 1,
+            heat: 600,
             distance: 4,
             depth: 3,
             grip: 1,
@@ -69,6 +69,19 @@ function main(){
                 createBullet(x, y, dir, 100, 1, 2),
                 createBullet(x, y, dir + Math.PI/6, 100, 1, 2),
                 createBullet(x, y, dir - Math.PI/6, 100, 1, 2)
+            ]
+        },
+        {
+            id: "burst",
+            delayMillis: 50,
+            recoil: 1,
+            heat: 300,
+            distance: 3,
+            depth: 7,
+            grip: 2,
+            width: Math.PI/6,
+            projectiles: (x, y, dir) => [
+                createBullet(x, y, dir, 100, 1, 1)
             ]
         }
     ];
@@ -138,26 +151,46 @@ function main(){
         gameState.enemies.push(newEnemy);
     }
 
+    function updateProjectile(projectile, deltaMillis){
+        const movement = projectile.unitsPerSec / 1000 * deltaMillis;
+        projectile.x += Math.cos(projectile.dir) * movement;
+        projectile.y += Math.sin(projectile.dir) * movement;
+        projectile.age += deltaMillis;
+    }
+
     function update(deltaMillis){
-        gameState.projectiles.forEach( projectile => {
-            const movement = projectile.unitsPerSec / 1000 * deltaMillis;
-            projectile.x += Math.cos(projectile.dir) * movement;
-            projectile.y += Math.sin(projectile.dir) * movement;
-            projectile.age += deltaMillis;
-        });
+        gameState.projectiles.forEach( projectile => updateProjectile(projectile, deltaMillis));
         gameState.projectiles = gameState.projectiles.filter(projectile => projectile.age < TEN_SECONDS);
         
         gameState.player.recoil = Math.max(0, Math.min(gameState.player.recoil - 0.1, gameState.player.recoil/1.2));
+        gameState.player.heat = Math.max(0, gameState.player.heat - deltaMillis*2);
+        if(gameState.player.heat < 100){
+            gameState.player.cooling = false;
+        }
 
-        gameState.weaponDelayMillis = Math.max(0, gameState.weaponDelayMillis - deltaMillis);
-        if(gameState.buttonsDown.left && gameState.weaponDelayMillis === 0){            
-            const tipX = Math.cos(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
-            const tipY = Math.sin(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
+        if(gameState.weaponDelayMillis > 0){
+            gameState.weaponDelayMillis -= deltaMillis;
+        }
+        if(gameState.weaponDelayMillis <= 0){
+            if(gameState.buttonsDown.left && !gameState.player.cooling){
+                const tipX = Math.cos(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
+                const tipY = Math.sin(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
 
-            gameState.player.recoil += gameState.currentWeapon.recoil;
+                gameState.player.recoil += gameState.currentWeapon.recoil;
 
-            gameState.projectiles.push(...gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir));
-            gameState.weaponDelayMillis = gameState.currentWeapon.delayMillis;
+                const newProjectiles = gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir);
+                newProjectiles.forEach(projectile => updateProjectile(projectile, -gameState.weaponDelayMillis));
+                gameState.projectiles.push(...newProjectiles);
+
+                gameState.weaponDelayMillis += gameState.currentWeapon.delayMillis;
+                gameState.player.heat = Math.min(6600, gameState.player.heat + gameState.currentWeapon.heat);
+                
+                if(gameState.player.heat >= 6500){
+                    gameState.player.cooling = true;
+                }
+            } else {
+                gameState.weaponDelayMillis = 0;
+            }
         }
 
         gameState.weaponTimerMillis = Math.max(0, gameState.weaponTimerMillis - deltaMillis);
@@ -298,6 +331,38 @@ function main(){
         }
     }
 
+    //Kelvin to RGB, based on https://github.com/timvw74/Kelvin2RGB/blob/master/Kelvin2RGB.cpp
+    function tempToRGB(kelvin){
+        const tmpKelvinHundrets = kelvin/100;
+
+        let r = 0, g = 0, b = 0;
+        if(tmpKelvinHundrets <= 66){
+            if(tmpKelvinHundrets <= 5.1){
+                //not a useful value for actual color temp stuff, but useful to fade to black in this game
+                r = kelvin/2;
+            } else {
+                r = 255; 
+            }
+            g = 99.4708025861 * Math.log(tmpKelvinHundrets) - 161.1195681661
+
+            if(tmpKelvinHundrets <= 19){
+                b = 0;
+              } else {
+                b = (138.5177312231 * Math.log(tmpKelvinHundrets - 10)) - 305.0447927307;
+              }
+        } else {
+            r = 329.698727466 * Math.pow(tmpKelvinHundrets - 60, -0.1332047592);
+            g = 288.1221695283 * Math.pow(tmpKelvinHundrets - 60, -0.0755148492);
+            b = 255;
+        }
+        return {
+            r: Math.min(255, Math.max(0, r)),
+            g: Math.min(255, Math.max(0, g)),
+            b: Math.min(255, Math.max(0, b)),
+        }
+    }
+    window.tempToRGB = tempToRGB;
+
     function drawGunner(ctx){
         ctx.save()
         ctx.rotate(gameState.mousePos.dir);
@@ -308,15 +373,22 @@ function main(){
         ctx.closePath();
         ctx.stroke();
 
-        ctx.translate(-gameState.player.recoil, 0);
         const weaponShape = gameState.currentWeapon.shape;
+        if(gameState.player.cooling){
+            ctx.translate( CENTER_SIZE - weaponShape.leftX, 0);
+        } else {
+            ctx.translate( -gameState.player.recoil, 0);
+        }
+        const heatColor = tempToRGB(gameState.player.heat);
 
+        ctx.fillStyle = `rgb(${heatColor.r}  ${heatColor.g}  ${heatColor.b})`;
         ctx.beginPath();
         ctx.moveTo(weaponShape.inner, 0);
         ctx.lineTo(weaponShape.leftX, weaponShape.leftY);
         ctx.lineTo(weaponShape.tip, 0);
         ctx.lineTo(weaponShape.rightX, weaponShape.rightY);
         ctx.closePath();
+        ctx.fill();
         ctx.stroke();
 
         ctx.restore();
@@ -359,7 +431,7 @@ function main(){
         ctx.beginPath();
         ctx.ellipse(0, 0, 99, 99, 0, 0, 2*Math.PI);
         ctx.closePath();
-        //ctx.clip();
+        ctx.clip();
 
         gameState.enemies.forEach(
             enemy => drawEnemy(enemy, ctx)
