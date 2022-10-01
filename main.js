@@ -1,33 +1,80 @@
-const TEN_SECONDS = 10000;
-
 function main(){
+    const TEN_SECONDS = 10000;
+    const CENTER_SIZE = 15;
+    const GUNNER_SIZE = 5;
+
     const canvas = document.getElementById('canvas');
     let scale = 1;
     const offset = {scale:1, left:0, top: 0};
 
     const gameState = {
-        mousePos: {x: 0, y: -100, dir: Math.atan2(-1, 0)},
+        mousePos: {x: 50, y: 0, dir: 0},
         currentWeapon: null,
         weaponTimer: TEN_SECONDS,
+        weaponDelayMillis: 0,
         player: {recoil: 0, heat: 0, health: 100},
         projectiles: [],
         enemies: [],
         time: 0,
-        enemyQueue: []
+        enemyQueue: [],
+        buttonsDown: {
+            left: false,
+            right: false
+        }
     }
 
-    function createBullet(x, y, dir, radius, damage){
+    function drawBullet(projectile, ctx){
+        ctx.fillStyle = 'gold';
+        ctx.beginPath();
+        ctx.ellipse(projectile.x, projectile.y, projectile.collisionRadius, projectile.collisionRadius, 0, 0, 2*Math.PI);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function createBullet(x, y, dir, unitsPerSec, radius, damage){
         return {
+            x, y, dir, unitsPerSec,
             impactDamage: damage,
             collides: true,
             collisionRadius: radius,
-            draw: drawBullet
+            draw: drawBullet,
         }
     }
 
     const weapons = [
-        {id: "pea-shooter", delay: 1, recoil: 1, heat: 1, projectiles: (x, y, dir) => [createBullet(x, y, dir, 5, 5)]}
+        {
+            id: "pea-shooter",
+            delayMillis: 300,
+            recoil: 1,
+            heat: 1,
+            distance: 5,
+            depth: 5,
+            grip: 2,
+            width: Math.PI/6,
+            projectiles: (x, y, dir) => [createBullet(x, y, dir, 100, 2, 5)]
+        }
     ];
+
+    weapons.forEach( weapon => {
+        const inner = CENTER_SIZE + GUNNER_SIZE + weapon.distance;
+        const tip = inner + weapon.depth;
+        const side = GUNNER_SIZE + weapon.distance - weapon.grip;
+
+        const leftX = CENTER_SIZE + Math.cos(-weapon.width) * side;
+        const leftY = Math.sin(-weapon.width) * side;
+
+        const rightX = CENTER_SIZE + Math.cos(weapon.width) * side;
+        const rightY = Math.sin(weapon.width) * side;
+
+        weapon.shape = {
+            tip,
+            inner,
+            leftX,
+            leftY,
+            rightX,
+            rightY
+        }
+    });
 
     function init(){
         gameState.time = 0;
@@ -36,18 +83,30 @@ function main(){
         gameState.projectiles = [];
         gameState.player = {recoil: 0, heat: 0, health: 100};
         gameState.weaponTimer = TEN_SECONDS;
-  
+
         gameState.currentWeapon = weapons[0];
     }
     init();
 
-    function update(delta){
+    function update(deltaMillis){
+        gameState.projectiles.forEach( projectile => {
+            const movement = projectile.unitsPerSec / 1000 * deltaMillis;
+            projectile.x += Math.cos(projectile.dir) * movement;
+            projectile.y += Math.sin(projectile.dir) * movement;
+        });
 
+        gameState.weaponDelayMillis = Math.max(0, gameState.weaponDelayMillis - deltaMillis);
+
+        if(gameState.buttonsDown.left && gameState.weaponDelayMillis === 0){
+            //TODO respect recoil
+            const tipX = Math.cos(gameState.mousePos.dir) * gameState.currentWeapon.shape.tip;
+            const tipY = Math.sin(gameState.mousePos.dir) * gameState.currentWeapon.shape.tip;
+
+            gameState.projectiles.push(...gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir));
+            gameState.weaponDelayMillis = gameState.currentWeapon.delayMillis;
+        }
     }
 
-    const CENTER_SIZE = 20;
-    const GUNNER_SIZE = 5;
-    const GUNNER_EDGE = CENTER_SIZE + GUNNER_SIZE;
     function drawCenter(ctx){
         ctx.strokeStyle = "white";
         ctx.fillStyle= "black";
@@ -59,43 +118,40 @@ function main(){
     }
 
     function drawGunner(ctx){
-        const cosDir = Math.cos(gameState.mousePos.dir);
-        const sinDir = Math.sin(gameState.mousePos.dir);
-
-        const centerX = cosDir * CENTER_SIZE;
-        const centerY = sinDir * CENTER_SIZE;
+        ctx.save()
+        ctx.rotate(gameState.mousePos.dir);
 
         ctx.strokeStyle = "yellow";
         ctx.beginPath();
-        ctx.ellipse(centerX, centerY, GUNNER_SIZE, GUNNER_SIZE, 0, 0, 2*Math.PI);
+        ctx.ellipse(CENTER_SIZE, 0, GUNNER_SIZE, GUNNER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
         ctx.stroke();
 
-        //TODO change depending on weapon?
-        //TODO repsect recoil
-        const tipX = cosDir * (GUNNER_EDGE + 10);
-        const tipY = sinDir * (GUNNER_EDGE + 10);
-
-        const innerX = cosDir * (GUNNER_EDGE + 5);
-        const innerY = sinDir * (GUNNER_EDGE + 5);
-
-        const leftX = Math.cos(gameState.mousePos.dir - 0.15) * (GUNNER_EDGE + 3);
-        const leftY = Math.sin(gameState.mousePos.dir - 0.15) * (GUNNER_EDGE + 3);
-
-        const rightX = Math.cos(gameState.mousePos.dir + 0.15) * (GUNNER_EDGE + 3);
-        const rightY = Math.sin(gameState.mousePos.dir + 0.15) * (GUNNER_EDGE + 3);
+        //TODO respect recoil
+        const weaponShape = gameState.currentWeapon.shape;
 
         ctx.beginPath();
-        ctx.moveTo(innerX, innerY);
-        ctx.lineTo(leftX, leftY);
-        ctx.lineTo(tipX, tipY);
-        ctx.lineTo(rightX, rightY);
+        ctx.moveTo(weaponShape.inner, 0);
+        ctx.lineTo(weaponShape.leftX, weaponShape.leftY);
+        ctx.lineTo(weaponShape.tip, 0);
+        ctx.lineTo(weaponShape.rightX, weaponShape.rightY);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    function drawFrame(ctx){
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 99, 99, 0, 0, 2*Math.PI);
         ctx.closePath();
         ctx.stroke();
     }
 
     function draw(){
-        //force flush canvas by resizing to prevent memory leak 
+        //force flush canvas by resizing to prevent memory leak
         const w = canvas.width;
         canvas.width = 1;
         canvas.width = w;
@@ -107,8 +163,20 @@ function main(){
         ctx.scale(scale, scale);
         ctx.translate(100, 100);
 
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 99, 99, 0, 0, 2*Math.PI);
+        ctx.closePath();
+        ctx.clip();
+
+        gameState.projectiles.forEach(
+            projectile => projectile.draw(projectile, ctx)
+        );
         drawGunner(ctx);
         drawCenter(ctx);
+
+        ctx.restore();
+        drawFrame(ctx);
 
         ctx.restore();
     }
@@ -128,7 +196,7 @@ function main(){
 
         canvas.style.left = `${offset.left}px`;
         canvas.style.top = `${offset.top}px`;
-        draw(); //prevent flickering while resizing 
+        draw(); //prevent flickering while resizing
     }
 
     window.addEventListener('resize', resize);
@@ -137,7 +205,7 @@ function main(){
     window.addEventListener('mousemove', (ev) => {
         const canvasX = ev.clientX - offset.left;
         gameState.mousePos.x = (canvasX - offset.size/2) / scale;
-        
+
         const canvasY = ev.clientY - offset.top;
         gameState.mousePos.y = (canvasY - offset.size/2) / scale;
 
@@ -146,37 +214,49 @@ function main(){
 
     window.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
+        if(ev.button === 0){
+            gameState.buttonsDown.left = true;
+        } else if (ev.button === 2){
+            gameState.buttonsDown.right = true;
+        }
     });
 
     window.addEventListener('mouseup', (ev) => {
-        ev.preventDefault();    
+        ev.preventDefault();
+        if(ev.button === 0){
+            gameState.buttonsDown.left = false;
+        } else if (ev.button === 2){
+            gameState.buttonsDown.right = false;
+        }
     });
 
     window.addEventListener('contextmenu', (ev) => {
-        ev.preventDefault();    
+        ev.preventDefault();
     });
 
-    let lastTime = Date.now();
-    let runningAverageDelta = 1000/60; //we expect 60fps
+    let lastTimeMillis = Date.now();
+    let runningAverageDeltaMillis = 1000/60; //we expect 60fps
     function frame(){
         window.requestAnimationFrame(frame);
 
-        const time = Date.now();
-        const delta = time - lastTime;
-        lastTime = time;
-        if(delta > 100){
+        const timeMillis = Date.now();
+        const deltaMillis = timeMillis - lastTimeMillis;
+        lastTimeMillis = timeMillis;
+        if(deltaMillis > 100){
             //skip frame
-            return; 
+            return;
         }
-        runningAverageDelta = (runningAverageDelta * 59 + delta)/60;
-        if(runningAverageDelta > 20){
-            console.error('Low FPS! ', 1000/runningAverageDelta);
+        runningAverageDeltaMillis = (runningAverageDeltaMillis * 59 + deltaMillis)/60;
+        if(runningAverageDeltaMillis > 20){
+            console.error('Low FPS! ', 1000/runningAverageDeltaMillis);
         }
-        update(delta);
+        update(deltaMillis);
         draw();
     }
 
     window.requestAnimationFrame(frame);
+
+    window.gameState = gameState;
 }
 
 if(document.readyState === 'complete'){
