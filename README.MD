@@ -4,7 +4,7 @@ This is my entry for Ludum Dare 51. The theme was "Every 10 Seconds".
 
 [![Screenshot of the game.](./screenshots/main.png)](https://rialgar.github.io/LD51/)
 
-[Rate here](https://ldjam.com/events/ludum-dare/51/)
+[Rate here](https://ldjam.com/events/ludum-dare/51/weaponswitcher)
 
 A shoot-em-up/defense game where your weapon switches every ten seconds. I originally planned for adding more weapons, but got dstracted by adding juice :). 
 
