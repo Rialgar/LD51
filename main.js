@@ -1,9 +1,72 @@
 function main(){
     const TEN_SECONDS = 10000;
     const CENTER_SIZE = 15;
-    const TIMER_SIZE = 3;
+    const TIMER_SIZE = CENTER_SIZE/5;
     const INNER_CENTER_SIZE = CENTER_SIZE - TIMER_SIZE;
     const GUNNER_SIZE = 5;
+    const ENEMY_SPLIT_SIZE = 8;
+
+    const cracks = [];
+    const shards = [];
+    {
+        const paths = [];
+        for(let i = 0; i < 10; i++){
+            const points = [
+                [Math.random() * CENTER_SIZE/6 - CENTER_SIZE/12, 1*CENTER_SIZE/5],
+                [Math.random() * CENTER_SIZE/5 - CENTER_SIZE/10, 2*CENTER_SIZE/5],
+                [Math.random() * CENTER_SIZE/4 - CENTER_SIZE/8, 3*CENTER_SIZE/5],
+                [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 4*CENTER_SIZE/5],
+                [0, CENTER_SIZE]
+            ]
+            const sin = Math.sin(2 * Math.PI * i/10);
+            const cos = Math.cos(2 * Math.PI * i/10);
+            let path = 'M 0 0';
+            points.forEach(p => {
+                const x = cos * p[0] - sin * p[1];
+                const y = sin * p[0] + cos * p[1];
+                p[0] = x;
+                p[1] = y;
+                path += ` L ${x} ${y}`;
+            })
+            cracks.push(new Path2D(path));
+            paths.push(points);
+        }
+        for(let i = 0; i < 10; i++){
+            const points0 = paths[i];
+            const points1 = [...paths[(i+1) % 10]];
+            points1.reverse();
+            let outside = 'M 0 0';
+            points0.forEach(
+                ([x, y]) => outside += ` L ${x} ${y}`
+            )
+            const p = points1.shift();
+            outside += `A ${CENTER_SIZE} ${CENTER_SIZE} 0 0 1 ${p[0]} ${p[1]}`;
+            points1.forEach(
+                ([x, y]) => outside += ` L ${x} ${y}`
+            )
+            outside += 'Z';
+
+            const p0 = points0[points0.length - 2];
+            const p1 = points1[0];
+            const inner_arc = `M ${p0[0]} ${p0[1]} A ${INNER_CENTER_SIZE} ${INNER_CENTER_SIZE} 0 0 1 ${p1[0]} ${p1[1]}`;
+
+            const angle = (i+3) / 10 * 2 * Math.PI;
+            const sin = Math.sin(angle);
+            const cos = Math.cos(angle);
+            
+            const line = new Path2D();
+            line.moveTo(cos*CENTER_SIZE, sin*CENTER_SIZE);
+            line.lineTo(cos*INNER_CENTER_SIZE, sin*INNER_CENTER_SIZE);
+            
+            shards.push({
+                outside: new Path2D(outside),
+                inner_arc: new Path2D(inner_arc),
+                line,
+                dir: angle,
+                center: {x: cos * CENTER_SIZE/2, y: sin * CENTER_SIZE/2}
+            });
+        }
+    }
 
     const canvas = document.getElementById('canvas');
     let scale = 1;
@@ -67,8 +130,8 @@ function main(){
             width: Math.PI/5,
             projectiles: (x, y, dir) => [
                 createBullet(x, y, dir, 100, 1, 2),
-                createBullet(x, y, dir + Math.PI/6, 100, 1, 2),
-                createBullet(x, y, dir - Math.PI/6, 100, 1, 2)
+                createBullet(x, y, dir + Math.PI/10, 100, 1, 2),
+                createBullet(x, y, dir - Math.PI/10, 100, 1, 2)
             ]
         },
         {
@@ -128,10 +191,18 @@ function main(){
         gameState.enemies = [];
         gameState.enemyQueue = [];
         gameState.projectiles = [];
-        gameState.player = {recoil: 0, heat: 0, health: 10};
+        gameState.player = {recoil: 0, heat: 0, deathAge: 0, health: 1};
         gameState.weaponTimerMillis = TEN_SECONDS;
-
         gameState.currentWeapon = weapons[0];
+
+        shards.forEach(shard => {
+            shard.rotation = 0;
+            shard.x = 0;
+            shard.y = 0;
+            shard.unitsPerSec = 20 + Math.random() * 20
+            shard.rotationPerSec = Math.random() * 2 - 1
+        })
+
         addEnemy({unitsPerSec: 20, size: 5, timeMillis: 5000});
         addEnemy({unitsPerSec: 20, size: 5, timeMillis: TEN_SECONDS});
     }
@@ -141,6 +212,7 @@ function main(){
         delete newEnemy.timeMillis;
         newEnemy.age = 0;
         newEnemy.health = 2*newEnemy.size;
+        newEnemy.damageTaken = 0;
         if(!newEnemy.x){
             newEnemy.x = Math.cos(newEnemy.dir) * 110;
             newEnemy.y = Math.sin(newEnemy.dir) * 110;
@@ -158,10 +230,59 @@ function main(){
         projectile.age += deltaMillis;
     }
 
-    function update(deltaMillis){
-        gameState.projectiles.forEach( projectile => updateProjectile(projectile, deltaMillis));
-        gameState.projectiles = gameState.projectiles.filter(projectile => projectile.age < TEN_SECONDS);
-        
+    function updateEnemy(enemy, deltaMillis){
+        enemy.health -= enemy.damageTaken;
+        if(enemy.health <= 0){
+            if(enemy.size >= ENEMY_SPLIT_SIZE){
+                spawnEnemy({...enemy, size: 2});
+                spawnEnemy({...enemy, size: 2});
+            } else {
+                addEnemy({...enemy, size: enemy.size + Math.random()*2});
+            }
+            return;
+        }
+        enemy.damageTaken = 0;
+
+        const movement = enemy.unitsPerSec / 1000 * deltaMillis;
+        enemy.x += Math.cos(enemy.dir) * movement;
+        enemy.y += Math.sin(enemy.dir) * movement;
+        enemy.age += deltaMillis;
+        enemy.hitFlash = false;
+
+        const distSq = enemy.x*enemy.x + enemy.y*enemy.y;
+        if(distSq < CENTER_SIZE*CENTER_SIZE){
+            enemy.health = 0;
+            gameState.player.health -= 1;
+            addEnemy({...enemy, size: enemy.size});
+        } else {
+            const weight = Math.round(1e7/deltaMillis/enemy.age);
+            let dirToTarget = Math.atan2(-enemy.y, -enemy.x);
+            while(dirToTarget - enemy.dir > Math.PI){
+                dirToTarget -= 2*Math.PI;
+            }
+            while(dirToTarget - enemy.dir < -Math.PI){
+                dirToTarget += 2*Math.PI;
+            }
+            enemy.dir = (enemy.dir * weight + dirToTarget) / (weight + 1);
+
+            gameState.projectiles.forEach(projectile => {
+                if(projectile.collides){
+                    const deltaX = enemy.x - projectile.x;
+                    const deltaY = enemy.y - projectile.y;
+                    const distSq = deltaX*deltaX + deltaY*deltaY;
+                    const colDist = enemy.size + projectile.collisionRadius;
+                    if(distSq < colDist*colDist){
+                        enemy.hitFlash = true;
+                        enemy.damageTaken += projectile.damage;
+                        projectile.collides = false;
+                        projectile.age += TEN_SECONDS;
+                    }
+                }
+            });
+        }
+    }
+
+    function updateWeapon(deltaMillis){
         gameState.player.recoil = Math.max(0, Math.min(gameState.player.recoil - 0.1, gameState.player.recoil/1.2));
         gameState.player.heat = Math.max(0, gameState.player.heat - deltaMillis*2);
         if(gameState.player.heat < 100){
@@ -200,86 +321,72 @@ function main(){
             gameState.currentWeapon = candidates[Math.floor(Math.random() * candidates.length)];
             gameState.weaponDelayMillis = 0;
         }
+    }
 
-        gameState.enemies.forEach(enemy => {
-            const movement = enemy.unitsPerSec / 1000 * deltaMillis;
-            enemy.x += Math.cos(enemy.dir) * movement;
-            enemy.y += Math.sin(enemy.dir) * movement;
-            enemy.age += deltaMillis;
-
-            const distSq = enemy.x*enemy.x + enemy.y*enemy.y;
-            if(distSq < CENTER_SIZE*CENTER_SIZE){
-                if(gameState.player.health > 0){
-                    enemy.health = 0;
-                    gameState.player.health -= 1;
-                    addEnemy({...enemy, size: enemy.size});
-                } else {
-                    alert('You lost. Game will reset.');
-                    init();
-                }
+    function update(deltaMillis){
+        if(gameState.player.health < 0){
+            if(gameState.player.deathAge > TEN_SECONDS/2){
+                alert('You lost, game will reset.');
+                init();
             } else {
-                const weight = Math.round(1e7/deltaMillis/enemy.age);
-                let dirToTarget = Math.atan2(-enemy.y, -enemy.x);
-                while(dirToTarget - enemy.dir > Math.PI){
-                    dirToTarget -= 2*Math.PI;
-                }
-                while(dirToTarget - enemy.dir < -Math.PI){
-                    dirToTarget += 2*Math.PI;
-                }
-                enemy.dir = (enemy.dir * weight + dirToTarget) / (weight + 1);
-
-                gameState.projectiles.forEach(projectile => {
-                    if(projectile.collides){
-                        const deltaX = enemy.x - projectile.x;
-                        const deltaY = enemy.y - projectile.y;
-                        const distSq = deltaX*deltaX + deltaY*deltaY;
-                        const colDist = enemy.size + projectile.collisionRadius;
-                        if(distSq < colDist*colDist){
-                            enemy.health -= projectile.damage;
-                            projectile.age += TEN_SECONDS;
-                        }
-                    }
+                shards.forEach(shard => {
+                    const movement = shard.unitsPerSec * deltaMillis/1000;
+                    shard.x += Math.cos(shard.dir) * movement;
+                    shard.y += Math.sin(shard.dir) * movement;
+                    shard.rotation += shard.rotationPerSec * deltaMillis/1000
                 });
-
-                if(enemy.health <= 0){
-                    if(enemy.size >= 8){
-                        spawnEnemy({...enemy, size: 2});
-                        spawnEnemy({...enemy, size: 2});
-                    } else {
-                        addEnemy({...enemy, size: enemy.size + Math.random()*2});
-                    }
-                }
+                gameState.player.deathAge += deltaMillis;
             }
-        });
+            return;            
+        }
 
-        gameState.enemies = gameState.enemies.filter(enemy => enemy.health > 0);
+        gameState.projectiles.forEach(
+            projectile => updateProjectile(projectile, deltaMillis)
+        );
+        gameState.projectiles = gameState.projectiles.filter(
+            projectile => projectile.age < TEN_SECONDS
+        );
+        
+        updateWeapon(deltaMillis);
+
+        gameState.enemies.forEach(
+            enemy => updateEnemy(enemy, deltaMillis)
+        );
+        gameState.enemies = gameState.enemies.filter(
+            enemy => enemy.health > 0
+        );
 
         gameState.enemyQueue.forEach(queued => queued.timeMillis -= deltaMillis);
         while(gameState.enemyQueue.length > 0 && gameState.enemyQueue[0].timeMillis <= 0){
             spawnEnemy(gameState.enemyQueue.shift());
         }
     }
-
-    const cracks = [];
-    for(let i = 0; i < 10; i++){
-        const points = [
-            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 1*CENTER_SIZE/4],
-            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 2*CENTER_SIZE/4],
-            [Math.random() * CENTER_SIZE/3 - CENTER_SIZE/6, 3*CENTER_SIZE/4],
-            [0, CENTER_SIZE]
-        ]
-        const sin = Math.sin(2 * Math.PI * i/10);
-        const cos = Math.cos(2 * Math.PI * i/10);
-        let path = 'M 0 0';
-        points.forEach(p => {
-            const x = cos * p[0] - sin * p[1];
-            const y = sin * p[0] + cos * p[1];
-            path += ` L ${x} ${y}`;
-        })
-        cracks.push(new Path2D(path));
-    }
-
+    
     function drawCenter(ctx){
+        if(gameState.player.health < 0){
+            shards.forEach( shard => {
+                ctx.save();
+                ctx.translate(shard.x, shard.y);
+
+                ctx.translate(shard.center.x, shard.center.y);
+                ctx.rotate(shard.rotation);
+                ctx.translate(-shard.center.x, -shard.center.y);
+                
+                ctx.strokeStyle = 'white';
+                ctx.fillStyle = 'black'
+                ctx.lineWidth = 1;
+                ctx.fill(shard.outside);
+                ctx.stroke(shard.outside);
+                ctx.stroke(shard.inner_arc);
+                ctx.lineWidth = 0.5;
+                ctx.stroke(shard.line);
+                
+                ctx.restore();
+            })
+
+            return;
+        }
+        
         for(let i = 0; i < 10; i++){
             const angle0 = (i-3) / 10 * 2 * Math.PI;
             const sin0 = Math.sin(angle0);
@@ -300,6 +407,7 @@ function main(){
         }
 
         ctx.strokeStyle = "white";
+        ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.ellipse(0, 0, CENTER_SIZE, CENTER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
@@ -367,7 +475,8 @@ function main(){
         ctx.save()
         ctx.rotate(gameState.mousePos.dir);
 
-        ctx.strokeStyle = 'hsl(280, 100%, 75%)';
+        ctx.strokeStyle = 'hsl(280, 100%, 75%)'; //aka r 213 g 128 b 255
+        ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.ellipse(CENTER_SIZE, 0, GUNNER_SIZE, GUNNER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
@@ -375,10 +484,14 @@ function main(){
 
         const weaponShape = gameState.currentWeapon.shape;
         if(gameState.player.cooling){
-            ctx.translate( CENTER_SIZE - weaponShape.leftX, 0);
-        } else {
-            ctx.translate( -gameState.player.recoil, 0);
+            const blend = (1 - Math.cos(gameState.player.heat * 8 * 2 * Math.PI / 6500)) / 2;
+            const r = (255 * blend + 213 * (1-blend));
+            const g = (255 * blend + 128 * (1-blend))
+            const b = (0 * blend + 255 * (1-blend))
+            ctx.strokeStyle = `rgb(${r} ${g} ${b})`;
         }
+        
+        ctx.translate( -gameState.player.recoil, 0);
         const heatColor = tempToRGB(gameState.player.heat);
 
         ctx.fillStyle = `rgb(${heatColor.r}  ${heatColor.g}  ${heatColor.b})`;
@@ -396,13 +509,31 @@ function main(){
 
     function drawEnemy(enemy, ctx){
         ctx.strokeStyle = "white";
-        ctx.fillStyle = "red";
-        ctx.lineWidth = 1;
+        if(enemy.hitFlash){
+            ctx.fillStyle = "white";
+        } else {
+            ctx.fillStyle = "red";
+        }
+        ctx.lineWidth = 0.5;
+
+        ctx.beginPath();
+        ctx.ellipse(enemy.x, enemy.y, enemy.health/2, enemy.health/2, 0, 0, 2*Math.PI);
+        ctx.closePath();
+        ctx.fill();
+
         ctx.beginPath();
         ctx.ellipse(enemy.x, enemy.y, enemy.size, enemy.size, 0, 0, 2*Math.PI);
         ctx.closePath();
         ctx.stroke();
-        ctx.fill();
+        
+        if(enemy.size >= ENEMY_SPLIT_SIZE){
+            ctx.fillStyle = "red";
+            ctx.beginPath();
+            ctx.ellipse(enemy.x, enemy.y, 2, 2, 0, 0, 2*Math.PI);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
     }
 
     function drawFrame(ctx){
