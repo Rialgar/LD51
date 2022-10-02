@@ -79,7 +79,7 @@ function main(){
         currentWeapon: null,
         weaponTimerMillis: TEN_SECONDS,
         weaponDelayMillis: 0,
-        player: {recoil: 0, heat: 0, cooling: false, health: 10},
+        player: {recoil: 0, heat: 0, cooling: false, health: 10, damageFlash: false},
         projectiles: [],
         enemies: [],
         corpses: [],
@@ -90,7 +90,9 @@ function main(){
         buttonsDown: {
             left: false,
             right: false
-        }
+        },
+        tutorial: 0,
+        screenShake: 0
     }
 
     function updateBullet(projectile, deltaMillis){
@@ -135,6 +137,7 @@ function main(){
     function updateWave(projectile, deltaMillis){
         projectile.age += deltaMillis * 5;
         projectile.r = projectile.age * 100 / TEN_SECONDS;
+        gameState.screenShake += deltaMillis/150;
     }
 
     function checkCollissionWave(projectile, enemy){
@@ -341,6 +344,12 @@ function main(){
 
             gameState.corpses.push(...splitEnemy(enemy));
 
+            if(gameState.tutorial === 1){
+                gameState.tutorial = 2;
+            }
+
+            gameState.screenShake += 1;
+
             return;
         }
         enemy.damageTaken = 0;
@@ -354,6 +363,8 @@ function main(){
         if(distSq < CENTER_SIZE*CENTER_SIZE){
             enemy.health = 0;
             gameState.player.health -= 1;
+            gameState.player.damageFlash = true;
+            gameState.screenShake += 5;
             addEnemy({...enemy});
         } else {
             const weight = Math.round(1e7/deltaMillis/enemy.age);
@@ -388,6 +399,7 @@ function main(){
                 const tipY = Math.sin(gameState.mousePos.dir) * (gameState.currentWeapon.shape.tip - gameState.player.recoil);
 
                 gameState.player.recoil += gameState.currentWeapon.recoil;
+                gameState.screenShake += gameState.currentWeapon.recoil/5;
 
                 const newProjectiles = gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir);
                 newProjectiles.forEach(projectile => projectile.update(projectile, -gameState.weaponDelayMillis));
@@ -398,6 +410,10 @@ function main(){
                 
                 if(gameState.player.heat >= 6500){
                     gameState.player.cooling = true;
+                }
+
+                if(gameState.tutorial === 0){
+                    gameState.tutorial = 1;
                 }
             } else {
                 gameState.weaponDelayMillis = 0;
@@ -414,6 +430,12 @@ function main(){
     }
 
     function update(deltaMillis){
+        if(gameState.screenShake > 0){
+            gameState.screenShake *= 0.8;
+            if(gameState.screenShake < 0.01){
+                gameState.screenShake = 0;
+            }
+        }
         if(gameState.player.health < 0){
             if(gameState.player.deathAge > TEN_SECONDS/2){
                 alert('You lost, game will reset.');
@@ -429,6 +451,8 @@ function main(){
             }
             return;            
         }
+
+        gameState.time += deltaMillis;
 
         gameState.corpses.forEach(corpse => {
             if(corpse.age < TEN_SECONDS){
@@ -451,10 +475,15 @@ function main(){
         );
         
         updateWeapon(deltaMillis);
+        gameState.player.damageFlash = false;
 
         if(gameState.buttonsDown.right && gameState.waveCharge >= 1){
             gameState.waveCharge = 0;
             gameState.projectiles.push(createWave());
+
+            if(gameState.tutorial === 2){
+                gameState.tutorial = 3;
+            }
         }
         if(gameState.waveCharge < 1){
             gameState.waveCharge += deltaMillis/TEN_SECONDS;
@@ -531,7 +560,11 @@ function main(){
         ctx.closePath();
         ctx.stroke();
 
-        ctx.fillStyle = 'black';
+        if(gameState.player.damageFlash){
+            ctx.fillStyle = 'white';    
+        } else {
+            ctx.fillStyle = 'black';
+        }
         ctx.beginPath();
         ctx.ellipse(0, 0, INNER_CENTER_SIZE, INNER_CENTER_SIZE, 0, 0, 2*Math.PI);
         ctx.closePath();
@@ -683,6 +716,37 @@ function main(){
         ctx.restore();
     }
 
+    function drawTutorial(ctx){
+        ctx.strokeStyle = 'white';
+
+        if(gameState.time % 1000 < 500){
+            ctx.fillStyle = 'white';
+            ctx.save();
+            if(gameState.tutorial == 0){
+                ctx.translate(-15, 0);
+            }
+            ctx.fillRect(0, -80, 15, 20);
+            ctx.restore();
+        }
+        
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-15, -80);
+        ctx.lineTo(-15, -50);
+        ctx.arc(0, -50, 15, Math.PI, 0, true);
+        ctx.lineTo(15, -80);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(-15, -60);
+        ctx.lineTo(15, -60);
+        ctx.moveTo(0, -60);
+        ctx.lineTo(0, -80);
+        ctx.stroke();
+    }
+
     function drawFrame(ctx){
         ctx.strokeStyle = "white";
         ctx.lineWidth = 1;
@@ -705,6 +769,10 @@ function main(){
         ctx.scale(scale, scale);
         ctx.translate(100, 100);
 
+        if(gameState.screenShake > 0){
+            ctx.translate(Math.random() * gameState.screenShake, Math.random() * gameState.screenShake);
+        }
+
         ctx.save();
         ctx.beginPath();
         ctx.ellipse(0, 0, 99, 99, 0, 0, 2*Math.PI);
@@ -714,6 +782,11 @@ function main(){
         gameState.corpses.forEach(
             corpse => drawCorpse(corpse, ctx)
         );
+
+        if(gameState.tutorial === 0 || gameState.tutorial === 2){
+            drawTutorial(ctx);
+        }
+
         gameState.enemies.forEach(
             enemy => drawEnemy(enemy, ctx)
         );
