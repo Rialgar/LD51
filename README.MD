@@ -1,4 +1,4 @@
-# Untitled
+# WeaponSwitcher
 
 This is my entry for Ludum Dare 51. The theme was "Every 10 Seconds".
 
@@ -6,11 +6,11 @@ This is my entry for Ludum Dare 51. The theme was "Every 10 Seconds".
 
 [Rate here](https://ldjam.com/events/ludum-dare/51/)
 
-WIP
+A shoot-em-up/defense game where your weapon switches every ten seconds. I originally planned for adding more weapons, but got dstracted by adding juice :). 
 
 ## Controls
 
-- WIP
+- Mouse to aim/shoot
 
 ## Library/Engine
 - None, straight HTML5 + JS only
