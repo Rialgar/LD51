@@ -80,6 +80,7 @@ function main(){
         player: {recoil: 0, heat: 0, cooling: false, health: 10},
         projectiles: [],
         enemies: [],
+        waveCharge: 1,
         time: 0,
         enemyQueue: [],
         buttonsDown: {
@@ -88,22 +89,73 @@ function main(){
         }
     }
 
+    function updateBullet(projectile, deltaMillis){
+        const movement = projectile.unitsPerSec / 1000 * deltaMillis;
+        projectile.x += Math.cos(projectile.dir) * movement;
+        projectile.y += Math.sin(projectile.dir) * movement;
+        projectile.age += deltaMillis;
+    }
+
+    function checkCollissionBullet(projectile, enemy){
+        if(projectile.age < TEN_SECONDS){
+            const deltaX = enemy.x - projectile.x;
+            const deltaY = enemy.y - projectile.y;
+            const distSq = deltaX*deltaX + deltaY*deltaY;
+            const colDist = enemy.size + projectile.radius;
+            if(distSq <= colDist*colDist){
+                enemy.damageTaken += projectile.damage;
+                projectile.age += TEN_SECONDS;
+            }
+        }
+    }
+
     function drawBullet(projectile, ctx){
         ctx.fillStyle = 'gold';
         ctx.beginPath();
         const scale = Math.max(1, (100-projectile.age)/25);
-        ctx.ellipse(projectile.x, projectile.y, projectile.collisionRadius*scale, projectile.collisionRadius, projectile.dir, 0, 2*Math.PI);
+        ctx.ellipse(projectile.x, projectile.y, projectile.radius*scale, projectile.radius, projectile.dir, 0, 2*Math.PI);
         ctx.closePath();
         ctx.fill();
     }
 
     function createBullet(x, y, dir, unitsPerSec, radius, damage){
         return {
-            x, y, dir, unitsPerSec, damage,
-            collides: true,
-            collisionRadius: radius,
+            x, y, dir, unitsPerSec, damage, radius,
+            update: updateBullet,
             draw: drawBullet,
+            checkCollission: checkCollissionBullet,
             age: 0,
+        }
+    }
+
+    function updateWave(projectile, deltaMillis){
+        projectile.age += deltaMillis * 5;
+        projectile.r = projectile.age * 100 / TEN_SECONDS;
+    }
+
+    function checkCollissionWave(projectile, enemy){
+        const dist = Math.sqrt(enemy.x*enemy.x + enemy.y*enemy.y);
+        if(dist < projectile.r){
+            enemy.x = enemy.x / dist * projectile.r;
+            enemy.y = enemy.y / dist * projectile.r;
+        }
+    }
+
+    function drawWave(projectile, ctx){
+        ctx.strokeStyle = 'gold';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, projectile.r, projectile.r, 0, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    function createWave(){
+        return {
+            update: updateWave,
+            draw: drawWave,
+            checkCollission: checkCollissionWave,
+            age: 0
         }
     }
 
@@ -144,7 +196,7 @@ function main(){
             grip: 2,
             width: Math.PI/6,
             projectiles: (x, y, dir) => [
-                createBullet(x, y, dir, 100, 1, 1)
+                createBullet(x, y, dir, 100, 1, 1.5)
             ]
         }
     ];
@@ -223,13 +275,6 @@ function main(){
         gameState.enemies.push(newEnemy);
     }
 
-    function updateProjectile(projectile, deltaMillis){
-        const movement = projectile.unitsPerSec / 1000 * deltaMillis;
-        projectile.x += Math.cos(projectile.dir) * movement;
-        projectile.y += Math.sin(projectile.dir) * movement;
-        projectile.age += deltaMillis;
-    }
-
     function updateEnemy(enemy, deltaMillis){
         enemy.health -= enemy.damageTaken;
         if(enemy.health <= 0){
@@ -247,8 +292,7 @@ function main(){
         enemy.x += Math.cos(enemy.dir) * movement;
         enemy.y += Math.sin(enemy.dir) * movement;
         enemy.age += deltaMillis;
-        enemy.hitFlash = false;
-
+        
         const distSq = enemy.x*enemy.x + enemy.y*enemy.y;
         if(distSq < CENTER_SIZE*CENTER_SIZE){
             enemy.health = 0;
@@ -266,18 +310,7 @@ function main(){
             enemy.dir = (enemy.dir * weight + dirToTarget) / (weight + 1);
 
             gameState.projectiles.forEach(projectile => {
-                if(projectile.collides){
-                    const deltaX = enemy.x - projectile.x;
-                    const deltaY = enemy.y - projectile.y;
-                    const distSq = deltaX*deltaX + deltaY*deltaY;
-                    const colDist = enemy.size + projectile.collisionRadius;
-                    if(distSq < colDist*colDist){
-                        enemy.hitFlash = true;
-                        enemy.damageTaken += projectile.damage;
-                        projectile.collides = false;
-                        projectile.age += TEN_SECONDS;
-                    }
-                }
+                projectile.checkCollission(projectile, enemy);
             });
         }
     }
@@ -300,7 +333,7 @@ function main(){
                 gameState.player.recoil += gameState.currentWeapon.recoil;
 
                 const newProjectiles = gameState.currentWeapon.projectiles(tipX, tipY, gameState.mousePos.dir);
-                newProjectiles.forEach(projectile => updateProjectile(projectile, -gameState.weaponDelayMillis));
+                newProjectiles.forEach(projectile => projectile.update(projectile, -gameState.weaponDelayMillis));
                 gameState.projectiles.push(...newProjectiles);
 
                 gameState.weaponDelayMillis += gameState.currentWeapon.delayMillis;
@@ -341,13 +374,21 @@ function main(){
         }
 
         gameState.projectiles.forEach(
-            projectile => updateProjectile(projectile, deltaMillis)
+            projectile => projectile.update(projectile, deltaMillis)
         );
         gameState.projectiles = gameState.projectiles.filter(
             projectile => projectile.age < TEN_SECONDS
         );
         
         updateWeapon(deltaMillis);
+
+        if(gameState.buttonsDown.right && gameState.waveCharge >= 1){
+            gameState.waveCharge = 0;
+            gameState.projectiles.push(createWave());
+        }
+        if(gameState.waveCharge < 1){
+            gameState.waveCharge += deltaMillis/TEN_SECONDS;
+        }
 
         gameState.enemies.forEach(
             enemy => updateEnemy(enemy, deltaMillis)
@@ -364,6 +405,14 @@ function main(){
     
     function drawCenter(ctx){
         if(gameState.player.health < 0){
+            ctx.strokeStyle = 'white';
+            ctx.fillStyle = 'black'
+
+            ctx.beginPath();
+            ctx.ellipse(0, 0, CENTER_SIZE, CENTER_SIZE, 0, 0, 2*Math.PI);
+            ctx.closePath();
+            ctx.fill();
+
             shards.forEach( shard => {
                 ctx.save();
                 ctx.translate(shard.x, shard.y);
@@ -372,9 +421,8 @@ function main(){
                 ctx.rotate(shard.rotation);
                 ctx.translate(-shard.center.x, -shard.center.y);
                 
-                ctx.strokeStyle = 'white';
-                ctx.fillStyle = 'black'
                 ctx.lineWidth = 1;
+
                 ctx.fill(shard.outside);
                 ctx.stroke(shard.outside);
                 ctx.stroke(shard.inner_arc);
@@ -475,6 +523,14 @@ function main(){
         ctx.save()
         ctx.rotate(gameState.mousePos.dir);
 
+        ctx.fillStyle = 'gold';
+        const chargeRadius = gameState.waveCharge * GUNNER_SIZE;
+        ctx.beginPath();
+        ctx.ellipse(CENTER_SIZE, 0, chargeRadius, chargeRadius, 0, 0, 2*Math.PI);
+        ctx.closePath();
+        ctx.fill();
+        
+
         ctx.strokeStyle = 'hsl(280, 100%, 75%)'; //aka r 213 g 128 b 255
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -509,7 +565,7 @@ function main(){
 
     function drawEnemy(enemy, ctx){
         ctx.strokeStyle = "white";
-        if(enemy.hitFlash){
+        if(enemy.damageTaken > 0){
             ctx.fillStyle = "white";
         } else {
             ctx.fillStyle = "red";
