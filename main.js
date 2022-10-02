@@ -191,7 +191,7 @@ function main(){
         gameState.enemies = [];
         gameState.enemyQueue = [];
         gameState.projectiles = [];
-        gameState.player = {recoil: 0, heat: 0, deathAge: 0, health: 1};
+        gameState.player = {recoil: 0, heat: 0, deathAge: 0, health: 10};
         gameState.weaponTimerMillis = TEN_SECONDS;
         gameState.currentWeapon = weapons[0];
 
