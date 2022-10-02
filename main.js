@@ -83,6 +83,7 @@ function main(){
         projectiles: [],
         enemies: [],
         corpses: [],
+        orbs: [],
         shards: [...shards],
         waveCharge: 1,
         time: 0,
@@ -92,7 +93,9 @@ function main(){
             right: false
         },
         tutorial: 0,
-        screenShake: 0
+        screenShake: 0,
+        score: 0,
+        won: false
     }
 
     function updateBullet(projectile, deltaMillis){
@@ -137,31 +140,45 @@ function main(){
     function updateWave(projectile, deltaMillis){
         projectile.age += deltaMillis * 5;
         projectile.r = projectile.age * 100 / TEN_SECONDS;
-        gameState.screenShake += deltaMillis/150;
+        gameState.screenShake += deltaMillis / (projectile.isWinningWave ? 50 : 150);
+
+        if(projectile.age >= TEN_SECONDS && projectile.isWinningWave){
+            alert('You won :D Game will now reset.');
+            init();
+        }
     }
 
     function checkCollissionWave(projectile, enemy){
         const dist = Math.sqrt(enemy.x*enemy.x + enemy.y*enemy.y);
         if(dist < projectile.r){
+            if(projectile.isWinningWave){
+                enemy.damageTaken = 100;
+            }
             enemy.x = enemy.x / dist * projectile.r;
             enemy.y = enemy.y / dist * projectile.r;
         }
     }
 
     function drawWave(projectile, ctx){
-        ctx.strokeStyle = 'gold';
-        ctx.lineWidth = 2;
+        if(projectile.isWinningWave){
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 4;
+        } else {
+            ctx.strokeStyle = 'gold';
+            ctx.lineWidth = 2;
+        }
         ctx.beginPath();
         ctx.ellipse(0, 0, projectile.r, projectile.r, 0, 0, 2 * Math.PI);
         ctx.closePath();
         ctx.stroke();
     }
 
-    function createWave(){
+    function createWave(isWinningWave){
         return {
             update: updateWave,
             draw: drawWave,
             checkCollission: checkCollissionWave,
+            isWinningWave: !!isWinningWave,
             age: 0
         }
     }
@@ -203,7 +220,7 @@ function main(){
             grip: 2,
             width: Math.PI/6,
             projectiles: (x, y, dir) => [
-                createBullet(x, y, dir, 100, 1, 1.5)
+                createBullet(x, y, dir, 100, 1, 1.666)
             ]
         }
     ];
@@ -229,7 +246,16 @@ function main(){
         }
     });
 
+    function addOrb({x, y, dir}){
+        const direction = dir + Math.random() * Math.PI - Math.PI/2;
+        const unitsPerSec = 50 + Math.random() * 50;
+        gameState.orbs.push({x, y, moveXperSec: Math.cos(direction) * unitsPerSec, moveYperSec: Math.sin(direction) * unitsPerSec});
+    }
+
     function addEnemy(enemy){
+        if(gameState.won){
+            return;
+        }
         enemy.dir = Math.random() * 2 * Math.PI;
         delete enemy.x;
         delete enemy.y;
@@ -250,9 +276,16 @@ function main(){
         gameState.enemies = [];
         gameState.enemyQueue = [];
         gameState.projectiles = [];
-        gameState.player = {recoil: 0, heat: 0, deathAge: 0, health: 10};
+        gameState.player = {cooling: false, recoil: 0, heat: 0, deathAge: 0, health: 10};
         gameState.weaponTimerMillis = TEN_SECONDS;
         gameState.currentWeapon = weapons[0];
+        gameState.screenShake = 0;
+        gameState.score = 0;
+        gameState.orbs = [];
+        gameState.waveCharge = 1;
+        gameState.weaponDelayMillis = 0;
+        gameState.won = false;
+
 
         gameState.shards.forEach(shard => {
             shard.rotation = 0;
@@ -262,12 +295,15 @@ function main(){
             shard.rotationPerSec = Math.random() * 2 - 1
         })
 
-        addEnemy({unitsPerSec: 20, size: 5, timeMillis: 5000});
+        addEnemy({unitsPerSec: 20, size: 5, timeMillis: TEN_SECONDS/2});
         addEnemy({unitsPerSec: 20, size: 5, timeMillis: TEN_SECONDS});
     }
     init();
 
     function spawnEnemy(newEnemy){
+        if(gameState.won){
+            return;
+        }
         delete newEnemy.timeMillis;
         newEnemy.age = 0;
         newEnemy.health = 2*newEnemy.size;
@@ -343,7 +379,11 @@ function main(){
             }
 
             gameState.corpses.push(...splitEnemy(enemy));
-
+            
+            for(let i=0; i<enemy.size; i++){
+                addOrb(enemy);
+            }
+            
             if(gameState.tutorial === 1){
                 gameState.tutorial = 2;
             }
@@ -429,6 +469,36 @@ function main(){
         }
     }
 
+    function updateOrb(orb, deltaMillis){
+        const dSq = orb.x * orb.x + orb.y * orb.y;
+        if(dSq < CENTER_SIZE * CENTER_SIZE){
+            orb.collected = true;
+            gameState.score += 1;
+        } else {
+            orb.x += orb.moveXperSec * deltaMillis/1000;
+            orb.y += orb.moveYperSec * deltaMillis/1000;
+
+            orb.moveXperSec *= 0.95;
+            orb.moveYperSec *= 0.95;
+
+            orb.moveXperSec -= orb.x/dSq * 100;
+            orb.moveYperSec -= orb.y/dSq * 100;
+        }
+    }
+
+    function updateCorpse(corpse, deltaMillis){
+        if(corpse.age < TEN_SECONDS){
+            const movement = corpse.unitsPerSec * deltaMillis/1000;
+            corpse.x += Math.cos(corpse.dir) * movement;
+            corpse.y += Math.sin(corpse.dir) * movement;
+            corpse.rotation += corpse.rotationPerSec * deltaMillis/1000;
+            corpse.age += deltaMillis;
+            
+            corpse.unitsPerSec *= Math.pow(0.9, deltaMillis*60/1000);
+            corpse.rotationPerSec *= Math.pow(0.9, deltaMillis*60/1000);
+        }
+    }
+
     function update(deltaMillis){
         if(gameState.screenShake > 0){
             gameState.screenShake *= 0.8;
@@ -438,7 +508,7 @@ function main(){
         }
         if(gameState.player.health < 0){
             if(gameState.player.deathAge > TEN_SECONDS/2){
-                alert('You lost, game will reset.');
+                alert('You lost :( Game will now reset.');
                 init();
             } else {
                 gameState.shards.forEach(shard => {
@@ -452,20 +522,24 @@ function main(){
             return;            
         }
 
+        if(gameState.score >= 600 && !gameState.won){
+                gameState.projectiles.push(createWave(true));
+                gameState.won = true;
+                gameState.enemyQueue = [];
+        }
+
         gameState.time += deltaMillis;
 
-        gameState.corpses.forEach(corpse => {
-            if(corpse.age < TEN_SECONDS){
-                const movement = corpse.unitsPerSec * deltaMillis/1000;
-                corpse.x += Math.cos(corpse.dir) * movement;
-                corpse.y += Math.sin(corpse.dir) * movement;
-                corpse.rotation += corpse.rotationPerSec * deltaMillis/1000;
-                corpse.age += deltaMillis;
-                
-                corpse.unitsPerSec *= Math.pow(0.9, deltaMillis*60/1000);
-                corpse.rotationPerSec *= Math.pow(0.9, deltaMillis*60/1000);
-            }
-        });
+        gameState.orbs.forEach(
+            orb => updateOrb(orb, deltaMillis)
+        );
+        gameState.orbs = gameState.orbs.filter(
+            orb => !orb.collected
+        )
+
+        gameState.corpses.forEach(
+            corpse => updateCorpse(corpse, deltaMillis)
+        );
 
         gameState.projectiles.forEach(
             projectile => projectile.update(projectile, deltaMillis)
@@ -570,6 +644,15 @@ function main(){
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+
+        if(!gameState.player.damageFlash){
+            ctx.fillStyle = 'green';
+            const r = Math.sqrt(gameState.score / 600) * INNER_CENTER_SIZE;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r, r, 0, 0, 2*Math.PI);
+            ctx.closePath();
+            ctx.fill();
+        }
 
         for(let i = 0; i < 10; i++){
             const angle = i / 10 * 2 * Math.PI;
@@ -747,6 +830,14 @@ function main(){
         ctx.stroke();
     }
 
+    function drawOrb(orb, ctx){
+        ctx.fillStyle = 'green';
+        ctx.beginPath();
+        ctx.ellipse(orb.x, orb.y, 1, 1, 0, 0, 2*Math.PI);
+        ctx.closePath(),
+        ctx.fill();
+    }
+
     function drawFrame(ctx){
         ctx.strokeStyle = "white";
         ctx.lineWidth = 1;
@@ -786,6 +877,10 @@ function main(){
         if(gameState.tutorial === 0 || gameState.tutorial === 2){
             drawTutorial(ctx);
         }
+
+        gameState.orbs.forEach(
+            orb => drawOrb(orb, ctx)
+        );
 
         gameState.enemies.forEach(
             enemy => drawEnemy(enemy, ctx)
